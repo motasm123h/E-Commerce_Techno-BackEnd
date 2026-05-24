@@ -1,0 +1,114 @@
+<?php
+
+use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Route;
+use App\Http\Controllers\Api\StoreController;
+use App\Http\Controllers\Api\CategoryController;
+use App\Http\Controllers\Api\SectionController;
+use App\Http\Controllers\Api\BrandController;
+use App\Http\Controllers\Api\ProductController;
+use App\Http\Controllers\Api\AuthController;
+use App\Http\Controllers\Api\OrderController;
+use App\Http\Controllers\Api\AdminDashboardController;
+use App\Http\Controllers\Api\SettingController;
+use App\Http\Controllers\Api\BannerController;
+use App\Http\Controllers\Api\ShippingZoneController;
+use App\Http\Controllers\Api\AdvertisementController;
+use App\Http\Controllers\Admin\AttributeController;
+
+use Illuminate\Support\Facades\RateLimiter;
+use Illuminate\Cache\RateLimiting\Limit;
+
+// ->middleware('auth:sanctum');
+RateLimiter::for('checkout', function (Request $request) {
+    return Limit::perHour(80)->by($request->ip());
+});
+
+Route::prefix('v1')->group(function () {
+    Route::middleware('auth:sanctum')->get('/user', function (Request $request) {
+        return $request->user();
+    });
+    Route::post('/admin/login', [AuthController::class, 'login']);
+
+    // 1. PUBLIC ROUTES (React Storefront)
+    Route::get('/public/shipping-zones', [ShippingZoneController::class, 'index']);
+
+    //product & category
+    Route::get('/public/products', [StoreController::class, 'getProducts']);
+    Route::get('/public/product/{product}', [ProductController::class, 'show']);
+    Route::get('/public/categories', [StoreController::class, 'getCategories']);
+
+    //build your pc
+    Route::get('/public/pc-configurator', [ProductController::class, 'getPcComponents']);
+
+
+    Route::get('/public/advertisements', [AdvertisementController::class, 'index']);
+
+
+    Route::get('/public/home-sections', [SectionController::class, 'getHomeSections']);
+    Route::get('/public/store-navigation', [CategoryController::class, 'getStoreNavigation']);
+
+    Route::post('/public/cart/recommendations', [\App\Http\Controllers\Api\ProductController::class, 'getCartRecommendations']);
+
+
+
+    Route::post('/admin/sections/{section}/attributes', [SectionController::class, 'syncAttributes']);
+    // 2. مسار لجلب الخصائص الخاصة بقسم معين (مهم جداً للواجهة الديناميكية)
+    Route::get('/admin/sections/{section}/attributes', [SectionController::class, 'getAttributes']);
+
+
+    //banners
+    Route::get('/public/banners', [BannerController::class, 'getPublicBanners']);
+
+    //orders
+    Route::get('/orders/track/{trackingCode}', [OrderController::class, 'trackOrder']);
+    Route::post('/orders/{order}', [OrderController::class, 'store']);
+    // Route::post('/orders/{order}', [OrderController::class, 'store'])->middleware('throttle:checkout');;
+    Route::post('/orders', [OrderController::class, 'store'])->middleware('throttle:checkout');
+    Route::post('/orders/{order}/cancel', [OrderController::class, 'cancelPublicOrder']);
+
+    // 2. PROTECTED ROUTES (React Admin Panel)
+    Route::middleware('auth:sanctum')->group(function () {
+        Route::apiResource('categories', CategoryController::class);
+        Route::apiResource('sections', SectionController::class);
+        Route::apiResource('brands', BrandController::class);
+        Route::apiResource('products', ProductController::class);
+
+        // Admin Notifications
+        Route::get('/admin/notifications', function (Request $request) {
+            return response()->json($request->user()->unreadNotifications);
+        });
+        Route::post('/admin/notifications/{id}/mark-as-read', function (Request $request, $id) {
+            $request->user()->notifications()->where('id', $id)->first()->markAsRead();
+            return response()->json(['message' => 'Marked as read']);
+        });
+
+        Route::get('/admin/banners', [App\Http\Controllers\Api\BannerController::class, 'index']);
+        Route::post('/admin/banners', [App\Http\Controllers\Api\BannerController::class, 'store']);
+        Route::put('/admin/banners/{id}', [App\Http\Controllers\Api\BannerController::class, 'update']);
+        Route::delete('/admin/banners/{id}', [App\Http\Controllers\Api\BannerController::class, 'destroy']);
+
+        // Admin Protected Routes
+
+
+        Route::get('/orders', [OrderController::class, 'index']);
+        Route::get('/orders/{order}', [OrderController::class, 'show']);
+        Route::post('/orders/{order}', [OrderController::class, 'update']);
+        Route::delete('/orders/{order}', [OrderController::class, 'destroy']);
+
+
+        Route::get('/dashboard', [AdminDashboardController::class, 'index']);
+        // Put this inside your PROTECTED auth:sanctum group
+        Route::post('/settings', [SettingController::class, 'update']);
+        Route::apiResource('shipping-zones', ShippingZoneController::class)->except(['index', 'show']);
+
+        Route::prefix('admin')->group(function () {
+            Route::apiResource('advertisements', AdvertisementController::class);
+            Route::get('/attributes', [AttributeController::class, 'index']);
+            Route::post('/attributes', [AttributeController::class, 'store']);
+            Route::put('/attributes/{attribute}', [AttributeController::class, 'update']);
+            Route::delete('/attributes/{attribute}', [AttributeController::class, 'destroy']);
+        });
+    });
+    Route::get('/public/settings', [SettingController::class, 'index']);
+});
