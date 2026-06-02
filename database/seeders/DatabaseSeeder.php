@@ -26,7 +26,7 @@ class DatabaseSeeder extends Seeder
         $this->call([
             AdminUserSeeder::class,
             StoreHierarchySeeder::class,
-            SettingsSeeder::class,
+            // SettingsSeeder::class,
             // You can add other seeders here later, like ShippingZoneSeeder
         ]);
     }

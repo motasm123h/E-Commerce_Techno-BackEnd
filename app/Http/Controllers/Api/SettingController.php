@@ -8,27 +8,45 @@ use Illuminate\Http\Request;
 
 class SettingController extends Controller
 {
-    /**
-     * جلب جميع الإعدادات بصيغة كائن موحد (Key -> Value) للفرونت إند
-     */
+   
+
     public function index()
     {
-        $settings = Setting::pluck('value', 'key');
+        $settings = Setting::all()->mapWithKeys(function ($setting) {
+            return [$setting->key => $setting->getTranslations('value')];
+        });
+
         return response()->json($settings, 200);
     }
 
     public function update(Request $request)
     {
-        $validated = $request->validate([
+        $request->validate([
             'settings' => 'required|array',
-            'settings.*' => 'nullable|string'
         ]);
 
-        foreach ($validated['settings'] as $key => $value) {
-            Setting::updateOrCreate(
-                ['key' => $key],
-                ['value' => $value]
-            );
+        foreach ($request->settings as $key => $value) {
+            $setting = Setting::where('key', $key)->first();
+
+            if ($setting) {
+                if (is_array($value)) {
+                    $setting->value = $value;
+                } else {
+                    $setting->setTranslation('value', 'en', $value);
+                    $setting->setTranslation('value', 'ar', $value);
+                }
+                $setting->save();
+            } else {
+                $newSetting = new Setting();
+                $newSetting->key = $key;
+                if (is_array($value)) {
+                    $newSetting->value = $value;
+                } else {
+                    $newSetting->setTranslation('value', 'en', $value);
+                    $newSetting->setTranslation('value', 'ar', $value);
+                }
+                $newSetting->save();
+            }
         }
 
         return response()->json(['message' => 'Settings updated successfully.'], 200);

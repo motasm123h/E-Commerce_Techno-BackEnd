@@ -15,6 +15,10 @@ return new class extends Migration
             $table->id();
             $table->string('name');
             // $table->string('type')->default('checkbox');
+            $table->enum('type', [
+                'checkbox',
+                'select',
+            ])->nullable();
 
             $table->timestamps();
         });

@@ -4,6 +4,7 @@ namespace App\Http\Controllers\Api;
 
 use App\Http\Controllers\Controller;
 use App\Models\Brand;
+use App\Models\Section;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Storage;
 use Illuminate\Support\Str;
@@ -12,8 +13,13 @@ class BrandController extends Controller
 {
     public function index()
     {
-        return Brand::all();
+        return Brand::with([
+            'section' => function ($query) {
+                $query->select('id', 'name');
+            }
+        ])->get();
     }
+
     public function show(Brand $brand)
     {
         return $brand;
@@ -21,56 +27,82 @@ class BrandController extends Controller
 
     public function store(Request $request)
     {
-        $validated = $request->validate([
-            'name' => 'required|string|max:255',
-            'icon' => 'nullable|image|mimes:jpeg,png,jpg,webp|max:2048', // Max 2MB
+        $request->validate([
+            'name' => 'required|array',
+            'name.en' => 'required|string|max:255',
+            'name.ar' => 'required|string|max:255',
+            'section_id' => 'required|exists:sections,id',
+            'icon' => 'nullable|string',
         ]);
 
-        $data = [
-            'name' => $validated['name'],
-            'slug' => Str::slug($validated['name']),
-        ];
+        $section = Section::findOrFail($request->section_id);
 
-        if ($request->hasFile('icon')) {
-            // Saves to storage/app/public/brands
-            $data['icon'] = $request->file('icon')->store('brands', 'public');
-        }
+        $slug = Str::slug(
+            $request->name['en'] . '-' . $section->name
+        );
 
-        return Brand::create($data);
+        $brand = Brand::create([
+            'name' => $request->name,
+            'slug' => $slug,
+            'section_id' => $request->section_id,
+            'icon' => $request->icon,
+        ]);
+
+        return response()->json([
+            'success' => true,
+            'data' => $brand,
+            'section' => $section->name
+        ], 201);
     }
 
-    public function update(Request $request, Brand $brand)
+    public function update(Request $request, $id)
     {
-        $validated = $request->validate([
-            'name' => 'sometimes|string|max:255',
-            'icon' => 'nullable|image|mimes:jpeg,png,jpg,webp|max:2048',
+        $brand = Brand::findOrFail($id);
+
+        $request->validate([
+            'name' => 'nullable|array',
+            'name.en' => 'required_with:name|string|max:255',
+            'name.ar' => 'required_with:name|string|max:255',
+            'section_id' => 'nullable|exists:sections,id',
+            'icon' => 'nullable|string',
         ]);
 
-        if (isset($validated['name'])) {
-            $brand->name = $validated['name'];
-            $brand->slug = Str::slug($validated['name']);
+        if ($request->has('name')) {
+            $brand->name = $request->name;
         }
 
-        if ($request->hasFile('icon')) {
-            // 1. Delete the old icon from storage to prevent junk files
-            if ($brand->icon) {
-                Storage::disk('public')->delete($brand->icon);
-            }
-            // 2. Save the new icon
-            $brand->icon = $request->file('icon')->store('brands', 'public');
+        if ($request->has('section_id')) {
+            $brand->section_id = $request->section_id;
         }
+
+        if ($request->has('icon')) {
+            $brand->icon = $request->icon;
+        }
+
+        $section = Section::findOrFail($brand->section_id);
+
+        $brand->slug = Str::slug(
+            $brand->name . '-' . $section->name
+        );
 
         $brand->save();
-        return $brand;
+
+        return response()->json([
+            'success' => true,
+            'data' => $brand,
+        ]);
     }
 
     public function destroy(Brand $brand)
     {
-        // Delete the icon file before deleting the database record
         if ($brand->icon) {
             Storage::disk('public')->delete($brand->icon);
         }
+
         $brand->delete();
-        return response()->json(['message' => 'Brand deleted successfully']);
+
+        return response()->json([
+            'message' => 'Brand deleted successfully'
+        ]);
     }
 }

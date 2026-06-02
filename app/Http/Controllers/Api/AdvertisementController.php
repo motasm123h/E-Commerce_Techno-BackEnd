@@ -4,11 +4,18 @@ namespace App\Http\Controllers\Api;
 
 use App\Http\Controllers\Controller;
 use App\Models\Advertisement;
+use App\Services\ImageService;
 use Illuminate\Http\Request;
-use Illuminate\Support\Facades\Storage;
 
 class AdvertisementController extends Controller
 {
+    protected $imageService;
+
+    public function __construct(ImageService $imageService)
+    {
+        $this->imageService = $imageService;
+    }
+
     /**
      * READ: Get all advertisements (Admin view)
      */
@@ -18,14 +25,12 @@ class AdvertisementController extends Controller
         return response()->json(['success' => true, 'data' => $advertisements]);
     }
 
-    /**
-     * CREATE: Store a new advertisement
-     */
+
     public function store(Request $request)
     {
         $request->validate([
             'title' => 'required|string|max:255',
-            'image' => 'required|image|mimes:jpeg,png,jpg,gif,webp|max:2048', // Max 2MB
+            'image' => 'required|image|mimes:jpeg,png,jpg,webp|max:5120',
             'link_url' => 'nullable|url',
             'type' => 'required|in:logo,banner',
             'is_active' => 'boolean',
@@ -34,10 +39,16 @@ class AdvertisementController extends Controller
 
         $data = $request->except('image');
 
-        // Handle Image Upload
         if ($request->hasFile('image')) {
-            $path = $request->file('image')->store('advertisements', 'public');
-            $data['image_path'] = '/storage/' . $path;
+            $width = $request->type === 'banner' ? 600 : 200;
+            $height = $request->type === 'banner' ? 300 : 200;
+
+            $data['image_path'] = $this->imageService->uploadAndCompressSingleImage(
+                $request->file('image'),
+                'advertisements',
+                $width,
+                $height
+            );
         }
 
         $advertisement = Advertisement::create($data);
@@ -45,16 +56,13 @@ class AdvertisementController extends Controller
         return response()->json(['success' => true, 'data' => $advertisement]);
     }
 
-    /**
-     * UPDATE: Update an existing advertisement
-     */
     public function update(Request $request, $id)
     {
         $advertisement = Advertisement::findOrFail($id);
 
         $request->validate([
             'title' => 'required|string|max:255',
-            'image' => 'nullable|image|mimes:jpeg,png,jpg,gif,webp|max:2048', // Nullable because they might not change the image
+            'image' => 'nullable|image|mimes:jpeg,png,jpg,webp|max:5120',
             'link_url' => 'nullable|url',
             'type' => 'required|in:logo,banner',
             'is_active' => 'boolean',
@@ -63,15 +71,18 @@ class AdvertisementController extends Controller
 
         $data = $request->except('image');
 
-        // Handle Image Update
         if ($request->hasFile('image')) {
-            // 1. Delete the old image from storage to save space
-            if ($advertisement->image_path && Storage::disk('public')->exists($advertisement->image_path)) {
-                Storage::disk('public')->delete($advertisement->image_path);
-            }
-            // 2. Upload the new image
-            $path = $request->file('image')->store('advertisements', 'public');
-            $data['image_path'] = $path;
+            $this->imageService->deletePhysicalImages([$advertisement->image_path]);
+
+            $width = $request->type === 'banner' ? 600 : 200;
+            $height = $request->type === 'banner' ? 300 : 200;
+
+            $data['image_path'] = $this->imageService->uploadAndCompressSingleImage(
+                $request->file('image'),
+                'advertisements',
+                $width,
+                $height
+            );
         }
 
         $advertisement->update($data);
@@ -86,13 +97,10 @@ class AdvertisementController extends Controller
     {
         $advertisement = Advertisement::findOrFail($id);
 
-        // Delete the image from the server before deleting the database record
-        if ($advertisement->image_path && Storage::disk('public')->exists($advertisement->image_path)) {
-            Storage::disk('public')->delete($advertisement->image_path);
-        }
+        $this->imageService->deletePhysicalImages([$advertisement->image_path]);
 
         $advertisement->delete();
 
-        return response()->json(['success' => true, 'message' => 'Advertisement deleted successfully']);
+        return response()->json(['success' => true, 'message' => 'Advertisement record and asset files dropped cleanly.']);
     }
 }

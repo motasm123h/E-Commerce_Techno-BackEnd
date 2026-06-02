@@ -13,8 +13,8 @@ return new class extends Migration
     {
         Schema::create('settings', function (Blueprint $table) {
             $table->id();
-            $table->string('key')->unique(); // e.g., 'whatsapp_number'
-            $table->text('value')->nullable();
+            $table->string('key')->unique();
+            $table->json('value')->nullable();
             $table->timestamps();
         });
     }

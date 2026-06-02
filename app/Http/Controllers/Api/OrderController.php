@@ -21,7 +21,6 @@ class OrderController extends Controller
      */
     public function index()
     {
-        // Fetch orders and include the items and the actual product details for each item
         $orders = Order::with('items.product')->paginate(8);
         return response()->json($orders);
     }
@@ -46,7 +45,11 @@ class OrderController extends Controller
             'customer_phone' => 'required|string|max:50',
             'delivery_location' => 'required|string',
             'shipping_zone_id' => 'required|exists:shipping_zones,id',
-            'payment_method' => 'required|in:cash,haram_transfer', // إضافة التحقق من وسيلة الدفع
+            'payment_method' => 'required|in:cash,haram_transfer',
+            
+            'city_location' => 'required|string|max:255',
+            'addressOne_location' => 'required|string|max:255', 
+            'order_note' => 'required|string|max:255',
             
             'cart' => 'required|array',
             'cart.*.id' => 'required|exists:products,id',
@@ -89,18 +92,22 @@ class OrderController extends Controller
 
             $finalTotal = $subtotal + $shippingZone->fee;
 
-            // 6. Create the Order (تم إضافة الحقول الجديدة)
             $order = Order::create([
                 'reference_number' => 'ORD-' . strtoupper(Str::random(6)),
-                'tracking_code'    => strtoupper(Str::random(8)), // كود التتبع الفريد للمستخدم
+                'tracking_code'    => strtoupper(Str::random(8)),
                 'customer_name'    => $request->customer_name,
                 'customer_phone'   => $request->customer_phone,
                 'delivery_location'=> $request->delivery_location,
                 'shipping_city'    => $shippingZone->city_name,
                 'shipping_fee'     => $shippingZone->fee,
+
+                'city_location' => $request->city_location,
+                'addressOne_location' => $request->addressOne_location, 
+                'order_note' => $request->order_note,
+                
                 'total_amount'     => $finalTotal,
-                'payment_method'   => $request->payment_method, // حفظ وسيلة الدفع
-                'status'           => 'pending' // الحالة الافتراضية
+                'payment_method'   => $request->payment_method,
+                'status'           => 'pending'
             ]);
 
             // 7. Save Items and Deduct Stock
@@ -144,19 +151,18 @@ class OrderController extends Controller
     public function update(Request $request, Order $order)
     {
         $request->validate([
-            'status' => 'required|string|in:pending,completed,cancelled'
+            'status' => 'required|string|in:pending,confirmed,shipped,delivered,cancelled'
         ]);
 
         $order->status = $request->status;
         $order->save();
 
-        // If the order is cancelled, you might want to return the stock to the products
         if ($request->status === 'cancelled') {
             foreach ($order->items as $item) {
                 $product = Product::find($item->product_id);
                 if ($product) {
                     $product->increment('stock', $item->quantity);
-                    $product->update(['is_active' => true]); // Reactivate if it was out of stock
+                    $product->update(['is_active' => true]); 
                 }
             }
         }

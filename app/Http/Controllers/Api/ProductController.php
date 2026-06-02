@@ -4,34 +4,55 @@ namespace App\Http\Controllers\Api;
 
 use App\Http\Controllers\Controller;
 use App\Models\Product;
+use App\Models\Attribute;
 use App\Http\Resources\ProductResource;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Storage;
-use Illuminate\Support\Str;
+use App\Services\ImageService;
 
 class ProductController extends Controller
 {
-    /**
-     * Display a listing of the products.
-     */
-    public function getPcComponents()
+    protected $imageService;
+
+    public function __construct(ImageService $imageService)
     {
-        $products = Product::with(['brand'])
+        $this->imageService = $imageService;
+    }
+
+
+    public function getPcComponents(Request $request)
+    {
+        $products = Product::with(['brand', 'section.category', 'tags', 'attributeValues.attribute'])
             ->where('is_active', true)
             ->whereNotNull('component_type')
             ->get();
 
-        $grouped = $products->groupBy('component_type');
+        $resourceCollection = ProductResource::collection($products)->resolve();
+        $grouped = collect($resourceCollection)->groupBy('component_type');
 
-        return response()->json($grouped, 200);
+        return response()->json([
+            'success' => true,
+            'data' => $grouped
+        ], 200);
     }
+    
     public function index()
     {
-        // Eager load relationships to prevent N+1 query problems
-        $products = Product::with(['brand', 'section.category'])->get();
+        $products = Product::with([
+            'brand',
+            'section.category',
+            'tags',
+            'attributeValues' => function ($query) {
+                $query->select('attribute_values.id', 'value', 'attribute_id');
+            }
+        ])->get();
+
         return ProductResource::collection($products);
     }
 
+    /**
+     * نظام اقتراحات سلة المشتريات الذكي
+     */
     public function getCartRecommendations(Request $request)
     {
         $cartProductIds = $request->input('product_ids', []);
@@ -39,28 +60,32 @@ class ProductController extends Controller
         if (empty($cartProductIds)) {
             $recommendations = Product::where('is_active', true)
                 ->where('stock', '>', 0)
-                ->with(['images'])
+                ->with(['brand', 'section.category', 'tags', 'attributeValues'])
                 ->latest()
                 ->take(4)
                 ->get();
 
-            return response()->json(['success' => true, 'data' => $recommendations]);
+            return response()->json([
+                'success' => true,
+                'data' => ProductResource::collection($recommendations)
+            ]);
         }
 
         $sectionIDs = Product::whereIn('id', $cartProductIds)->pluck('section_id')->unique();
 
         $recommendations = Product::where('is_active', true)
             ->whereIn('section_id', $sectionIDs)
-            ->whereNotIn('id', $cartProductIds) // لا تعرض منتجاً موجوداً بالفعل في السلة
-            // ->with(['images'])
+            ->whereNotIn('id', $cartProductIds)
+            ->with(['brand', 'section.category', 'tags', 'attributeValues'])
             ->inRandomOrder()
-            ->take(4) // نعرض 4 منتجات فقط ليتناسب مع التصميم
+            ->take(4)
             ->get();
 
         if ($recommendations->count() < 4) {
             $needed = 4 - $recommendations->count();
             $extraProducts = Product::where('is_active', true)
                 ->whereNotIn('id', array_merge($cartProductIds, $recommendations->pluck('id')->toArray()))
+                ->with(['brand', 'section.category', 'tags', 'attributeValues'])
                 ->inRandomOrder()
                 ->take($needed)
                 ->get();
@@ -68,21 +93,31 @@ class ProductController extends Controller
             $recommendations = $recommendations->merge($extraProducts);
         }
 
-        return response()->json(['success' => true, 'data' => $recommendations]);
+        return response()->json([
+            'success' => true,
+            'data' => ProductResource::collection($recommendations)
+        ]);
     }
 
-
-    public function show($id)
+    
+    public function show($slug)
     {
-        $product = Product::with(['brand', 'section.category'])
-            ->where('is_active', true)
-            ->findOrFail($id);
+        $product = Product::with(['attributeValues.attribute', 'brand', 'section.category', 'tags'])
+            ->where('slug', $slug)
+            ->first();
+
+        if (!$product) {
+            return response()->json([
+                'success' => false,
+                'message' => 'The requested product was not found in our catalog entries.'
+            ], 404);
+        }
 
         return new ProductResource($product);
     }
 
     /**
-     * Store a newly created product in storage.
+     * تخزين منتج جديد بربط فلاتره وأوسمته
      */
     public function store(Request $request)
     {
@@ -97,48 +132,61 @@ class ProductController extends Controller
             'section_id' => 'nullable|exists:sections,id',
             'images' => 'nullable|array',
             'component_type' => 'nullable',
-            '`attributes`' => 'nullable|array',
             'images.*' => 'image|mimes:jpeg,png,jpg,gif,webp|max:4096',
+            'attribute_value_ids' => 'nullable|array',
+            'attribute_value_ids.*' => 'exists:attribute_values,id',
+            'tag_ids' => 'nullable|array',
+            'description' => 'nullable|string',
+            'tag_ids.*' => 'exists:tags,id',
+            // Validation rules to accept arrays directly
+            'colors' => 'nullable|array',
+            'details' => 'nullable|array',
         ]);
 
         $imagePaths = [];
         if ($request->hasFile('images')) {
-            foreach ($request->file('images') as $imageFile) {
-                if ($imageFile->isValid()) {
-                    $path = $imageFile->store('products', 'public');
-                    $imagePaths[] = '/storage/' . $path;
-                }
-            }
+            $imagePaths = $this->imageService->uploadAndCompressImages(
+                $request->file('images'),
+                'products'
+            );
         }
 
-        // إنشاء المنتج وحفظ الألوان والتفاصيل كمصفوفات
         $product = Product::create([
             'name' => $validatedData['name'],
             'slug' => $validatedData['slug'],
             'price' => $validatedData['price'],
+            'description' => $request->description,
             'stock' => $validatedData['stock'],
-            'component_type' => $validatedData['component_type'],
+            'component_type' => $validatedData['component_type'] ?? null,
             'is_active' => (bool) $validatedData['is_active'],
             'images' => $imagePaths,
-
-            // تحويل نص الألوان القادم "Red, Black" إلى مصفوفة ["Red", "Black"]
-            'colors' => $request->colors ? array_map('trim', explode(',', $request->colors)) : [],
-
-
-            // تقسيم النص عند علامة // لبناء مصفوفة المواصفات بشكل نظيف
-            'details' => $request->details ? array_filter(array_map('trim', explode('//', $request->details))) : [],
+            // Assign the arrays directly, defaulting to empty arrays if null
+            'colors' => $request->input('colors', []),
+            'details' => $request->input('details', []),
             'category_id' => $request->category_id ?? null,
             'brand_id' => $request->brand_id ?? null,
             'section_id' => $request->section_id ?? null,
         ]);
 
-        $product->load(['category', 'brand', 'section']);
+        if ($request->has('attribute_value_ids')) {
+            $product->attributeValues()->sync($request->attribute_value_ids);
+        }
 
-        return response()->json($product, 201);
+        if ($request->has('tag_ids')) {
+            $product->tags()->sync($request->tag_ids);
+        }
+
+        $product->load(['category', 'brand', 'section.category', 'attributeValues', 'tags']);
+
+        return (new ProductResource($product))
+            ->additional(['message' => 'Product launched successfully'])
+            ->response()
+            ->setStatusCode(201);
     }
 
-
-
+    /**
+     * تحديث منتج قائم ومزامنة وسومه وفلاتره
+     */
     public function update(Request $request, $id)
     {
         $product = Product::findOrFail($id);
@@ -149,21 +197,42 @@ class ProductController extends Controller
             'price' => 'required|numeric|min:0',
             'stock' => 'required|integer|min:0',
             'is_active' => 'required|in:0,1',
-            'category_id' => 'nullable|exists:categories,id',
-            'brand_id' => 'nullable|exists:brands,id',
-            'section_id' => 'nullable|exists:sections,id',
-            'component_type' => 'nullable|string',
-            'images' => 'nullable|array',
+            'tag_ids' => 'nullable|array',
+            'description' => 'nullable|string',
+            'tag_ids.*' => 'exists:tags,id',
+            // Validation rules to accept arrays directly
+            'colors' => 'nullable|array',
+            'details' => 'nullable|array',
         ]);
 
-        // معالجة الصور: إذا رفع صوراً جديدة نقوم بدمجها أو استبدالها
-        $imagePaths = $product->images ?? [];
-        if ($request->hasFile('images')) {
-            foreach ($request->file('images') as $imageFile) {
-                if ($imageFile->isValid()) {
-                    $path = $imageFile->store('products', 'public');
-                    $imagePaths[] = '/storage/' . $path;
+        $oldImages = $product->images ?? [];
+
+        $remainingImages = [];
+        if ($request->has('existing_images')) {
+            $remainingImages = array_filter($request->existing_images, function ($item) {
+                return is_string($item) && !empty($item);
+            });
+        }
+        $remainingImages = array_values($remainingImages);
+
+        $deletedImages = array_diff($oldImages, $remainingImages);
+        if (!empty($deletedImages)) {
+            $this->imageService->deletePhysicalImages($deletedImages);
+        }
+
+        $imagePaths = $remainingImages;
+
+        if ($request->hasFile('new_images')) {
+            $newFiles = [];
+            foreach ($request->file('new_images') as $file) {
+                if ($file->isValid()) {
+                    $newFiles[] = $file;
                 }
+            }
+
+            if (!empty($newFiles)) {
+                $newCompressedImages = $this->imageService->uploadAndCompressImages($newFiles, 'products');
+                $imagePaths = array_merge($imagePaths, $newCompressedImages);
             }
         }
 
@@ -173,26 +242,38 @@ class ProductController extends Controller
             'price' => $validatedData['price'],
             'stock' => $validatedData['stock'],
             'is_active' => (bool) $validatedData['is_active'],
+            'description' => $request->description,
             'images' => $imagePaths,
             'component_type' => $request->component_type ?? null,
             'category_id' => $request->category_id ?? null,
             'brand_id' => $request->brand_id ?? null,
             'section_id' => $request->section_id ?? null,
-
-            // استخدام المعالجة الذكية المحدثة دائماً للحفاظ على نفس النظام
-            'colors' => $request->colors ? array_filter(array_map('trim', explode(',', $request->colors))) : $product->colors,
-            'details' => $request->details ? array_filter(array_map('trim', explode('//', $request->details))) : $product->details,
+            // Assign the arrays directly, defaulting to empty arrays if null
+            'colors' => $request->input('colors', []),
+            'details' => $request->input('details', []),
         ]);
 
-        return response()->json(['message' => 'Product updated successfully.', 'product' => $product], 200);
+        if ($request->has('attribute_value_ids')) {
+            $product->attributeValues()->sync($request->attribute_value_ids);
+        }
+
+        if ($request->has('tag_ids')) {
+            $product->tags()->sync($request->tag_ids);
+        }
+
+        $product->load(['category', 'brand', 'section.category', 'attributeValues', 'tags']);
+
+        return (new ProductResource($product))
+            ->additional(['message' => 'Product updated successfully'])
+            ->response()
+            ->setStatusCode(200);
     }
 
     /**
-     * Remove the specified product from storage.
+     * حذف منتج من السيرفر
      */
     public function destroy(Product $product)
     {
-        // Ensure images are deleted from the disk when the product is removed
         if (!empty($product->images)) {
             foreach ($product->images as $image) {
                 Storage::disk('public')->delete($image);
@@ -202,5 +283,28 @@ class ProductController extends Controller
         $product->delete();
 
         return response()->json(['message' => 'Product deleted successfully']);
+    }
+
+    /**
+     * فلاتر البحث للسكشن
+     */
+    public function getSectionFilters(Request $request)
+    {
+        $request->validate(['section_id' => 'required|exists:sections,id']);
+        $sectionId = $request->section_id;
+
+        $filters = Attribute::whereHas('sections', function ($q) use ($sectionId) {
+            $q->where('sections.id', $sectionId);
+        })->with(['values' => function ($q) use ($sectionId) {
+            $q->whereHas('products', function ($pq) use ($sectionId) {
+                $pq->where('products.section_id', $sectionId)
+                    ->where('products.is_active', true);
+            });
+        }])->get();
+
+        return response()->json([
+            'success' => true,
+            'data' => $filters
+        ]);
     }
 }

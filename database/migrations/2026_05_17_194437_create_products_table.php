@@ -36,8 +36,10 @@ return new class extends Migration
                 'mouse',
                 'keyboard',
                 'headphone',
-                'sound_system'
+                'sound_system',
+                'processor',
             ])->nullable();
+            $table->text('description')->nullable();
             $table->json('images')->nullable();
             $table->json('colors')->nullable();
             $table->json('details')->nullable();

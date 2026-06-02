@@ -18,7 +18,12 @@ return new class extends Migration
             // --- ADD THESE THREE LINES ---
             $table->string('customer_name');
             $table->string('customer_phone');
-            $table->text('delivery_location'); 
+            $table->text('delivery_location');
+            
+            $table->string('city_location');
+            $table->text('addressOne_location');
+            $table->text('order_note');
+ 
             // -----------------------------
             
             $table->decimal('total_amount', 10, 2);

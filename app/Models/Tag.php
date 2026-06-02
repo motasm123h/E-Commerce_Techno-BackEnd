@@ -5,7 +5,7 @@ namespace App\Models;
 use Illuminate\Database\Eloquent\Model;
 use Spatie\Translatable\HasTranslations;
 
-class Category extends Model
+class Tag extends Model
 {
     use HasTranslations;
 
@@ -13,8 +13,9 @@ class Category extends Model
 
     public $translatable = ['name'];
 
-    public function sections()
+
+    public function products()
     {
-        return $this->hasMany(Section::class);
+        return $this->belongsToMany(Product::class);
     }
 }

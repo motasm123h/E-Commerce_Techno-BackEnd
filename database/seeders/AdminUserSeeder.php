@@ -14,12 +14,11 @@ class AdminUserSeeder extends Seeder
      */
     public function run(): void
     {
-        // Use updateOrCreate so if you run the seeder twice, it doesn't crash
         User::updateOrCreate(
-            ['email' => 'admin@yourstore.com'], // The email you will use to log in
+            ['email' => 'admin@yourstore.com'],
             [
                 'name' => 'Store Admin',
-                'password' => Hash::make('password123'), // Change this to a strong password!
+                'password' => Hash::make('password123'),
                 'email_verified_at' => now(),
             ]
         );

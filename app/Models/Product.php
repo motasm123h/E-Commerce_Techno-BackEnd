@@ -20,6 +20,7 @@ class Product extends Model
         'colors',
         'details',
         'component_type',
+        'description',
     ];
     protected $casts = [
         'images' => 'array',
@@ -47,5 +48,10 @@ class Product extends Model
     public function attributeValues()
     {
         return $this->belongsToMany(AttributeValue::class, 'product_attribute');
+    }
+
+    public function tags()
+    {
+        return $this->belongsToMany(Tag::class);
     }
 }

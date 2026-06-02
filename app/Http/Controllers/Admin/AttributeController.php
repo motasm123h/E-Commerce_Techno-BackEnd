@@ -29,7 +29,7 @@ class AttributeController extends Controller
     {
         $validatedData = $request->validate([
             'name' => 'required|string|max:255|unique:attributes,name',
-            'type' => 'required|string|in:checkbox,select' // التأكد من نوع الحقل
+            'type' => 'required|string|in:checkbox,select'
         ]);
 
         $attribute = Attribute::create($validatedData);

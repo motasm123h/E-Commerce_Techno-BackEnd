@@ -14,7 +14,7 @@ return new class extends Migration
         Schema::create('sections', function (Blueprint $table) {
             $table->id();
             $table->foreignId('category_id')->constrained()->onDelete('cascade');
-            $table->string('name');
+            $table->json('name');
             $table->boolean('display_on_home')->default(false);
             $table->integer('home_order')->default(0);
             $table->string('slug')->unique();

@@ -13,7 +13,7 @@ return new class extends Migration
     {
         Schema::create('brands', function (Blueprint $table) {
             $table->id();
-            $table->string('name');
+            $table->json('name');
             $table->string('slug')->unique();
             $table->foreignId('section_id')->constrained()->onDelete('cascade');
             // Added icon column (stores the path or URL to the image)
